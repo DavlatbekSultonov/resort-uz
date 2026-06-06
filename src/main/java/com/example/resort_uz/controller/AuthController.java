@@ -1,8 +1,7 @@
 package com.example.resort_uz.controller;
 
-import com.example.resort_uz.dto.ApiResponse;
+import com.example.resort_uz.common.ApiResponse;
 import com.example.resort_uz.dto.LoginRequestDTO;
-import com.example.resort_uz.dto.LoginResponseDTO;
 import com.example.resort_uz.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -19,10 +18,9 @@ public class AuthController {
 
     private final AuthService authService;
 
-    // POST /api/auth/login
     @Operation(summary = "Tizimga kirish", description = "Username va parol bilan kirish, JWT token qaytaradi")
     @PostMapping("/login")
-    public ResponseEntity<ApiResponse<LoginResponseDTO>> login(@Valid @RequestBody LoginRequestDTO dto) {
+    public ResponseEntity<ApiResponse> login(@Valid @RequestBody LoginRequestDTO dto) {
         return ResponseEntity.ok(authService.login(dto));
     }
 }

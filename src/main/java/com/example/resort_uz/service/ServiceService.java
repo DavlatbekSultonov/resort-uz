@@ -15,7 +15,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.stream.Collectors;
 
-@org.springframework.stereotype.Service
+@Service
 @RequiredArgsConstructor
 public class ServiceService {
 
@@ -26,24 +26,20 @@ public class ServiceService {
     public ApiResponse getByResort(Long resortId) {
         List<ServiceResponseDTO> list = serviceRepository
                 .findByResortIdAndActiveTrue(resortId)
-                .stream().map((Service s) -> toDTO((Service_entity) s))
-                .collect(Collectors.toList());
-        return ApiResponse.builder().status(true).message("OK").data(list).build();
+                .stream().map(this::toDTO).collect(Collectors.toList());
+        return ApiResponse.ok(list);
     }
 
     public ApiResponse create(ServiceRequestDTO dto, Long adminId) {
         Resort resort = resortRepository.findById(dto.getResortId()).orElse(null);
-        if (resort == null) return ApiResponse.builder()
-                .status(false).message("Maskan topilmadi").build();
+        if (resort == null) return ApiResponse.error("Maskan topilmadi");
 
-        // OWNER faqat o'z resortiga xizmat qo'sha oladi
         Admin admin = adminRepository.findById(adminId).orElse(null);
-        if (admin == null) return ApiResponse.builder()
-                .status(false).message("Admin topilmadi").build();
+        if (admin == null) return ApiResponse.error("Admin topilmadi");
 
         boolean isSuperAdmin = admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !resort.getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
+            return ApiResponse.error("Ruxsat yo'q");
 
         Service_entity service = Service_entity.builder()
                 .resort(resort)
@@ -59,20 +55,17 @@ public class ServiceService {
                 .build();
 
         serviceRepository.save(service);
-        return ApiResponse.builder().status(true).message("Xizmat qo'shildi")
-                .data(toDTO(service)).build();
+        return ApiResponse.ok("Xizmat qo'shildi", toDTO(service));
     }
 
     public ApiResponse update(Long id, ServiceRequestDTO dto, Long adminId) {
         Service_entity service = serviceRepository.findById(id).orElse(null);
-        if (service == null) return ApiResponse.builder()
-                .status(false).message("Xizmat topilmadi").build();
+        if (service == null) return ApiResponse.error("Xizmat topilmadi");
 
-        // OWNER faqat o'z resortining xizmatini tahrirlaydi
         Admin admin = adminRepository.findById(adminId).orElse(null);
         boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !service.getResort().getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
+            return ApiResponse.error("Ruxsat yo'q");
 
         service.setName(dto.getName());
         service.setDescription(dto.getDescription());
@@ -83,30 +76,27 @@ public class ServiceService {
         service.setPriceType(dto.getPriceType());
         if (dto.getCurrency() != null) service.setCurrency(dto.getCurrency());
         serviceRepository.save(service);
-
-        return ApiResponse.builder().status(true).message("Xizmat yangilandi")
-                .data(toDTO(service)).build();
+        return ApiResponse.ok("Xizmat yangilandi", toDTO(service));
     }
 
     public ApiResponse delete(Long id, Long adminId) {
         Service_entity service = serviceRepository.findById(id).orElse(null);
-        if (service == null) return ApiResponse.builder()
-                .status(false).message("Xizmat topilmadi").build();
+        if (service == null) return ApiResponse.error("Xizmat topilmadi");
 
-        // OWNER faqat o'z resortining xizmatini o'chiradi
         Admin admin = adminRepository.findById(adminId).orElse(null);
         boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !service.getResort().getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
+            return ApiResponse.error("Ruxsat yo'q");
 
         service.setActive(false);
         serviceRepository.save(service);
-        return ApiResponse.builder().status(true).message("Xizmat o'chirildi").build();
+        return ApiResponse.ok("Xizmat o'chirildi");
     }
 
     private ServiceResponseDTO toDTO(Service_entity s) {
         return ServiceResponseDTO.builder()
                 .id(s.getId())
+                .resortId(s.getResort().getId())
                 .name(s.getName())
                 .description(s.getDescription())
                 .serviceType(s.getServiceType())
@@ -115,6 +105,7 @@ public class ServiceService {
                 .price(s.getPrice())
                 .priceType(s.getPriceType())
                 .currency(s.getCurrency())
+                .active(s.getActive())
                 .build();
     }
 }

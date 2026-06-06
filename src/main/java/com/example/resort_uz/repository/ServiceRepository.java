@@ -15,7 +15,7 @@ import java.util.List;
 public interface ServiceRepository extends JpaRepository<Service_entity, Long> {
 
 
-    List<Service> findByResortIdAndActiveTrue(Long resortId);
+    List<Service_entity> findByResortIdAndActiveTrue(Long resortId);
 
     @Modifying
     @Transactional

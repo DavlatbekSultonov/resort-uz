@@ -39,33 +39,22 @@ public class PhotoService {
     @Value("${app.base-url}")
     private String baseUrl;
 
-    // ================================================
-    //  RASM YUKLASH
-    // ================================================
-
     @Transactional
-    public ApiResponse upload(Long resortId, MultipartFile file,
-                              String caption, Boolean isCover, Long adminId) {
-
+    public ApiResponse upload(Long resortId, MultipartFile file, String caption, Boolean isCover, Long adminId) {
         Resort resort = resortRepository.findById(resortId).orElse(null);
-        if (resort == null) return ApiResponse.builder()
-                .status(false).message("Maskan topilmadi").build();
+        if (resort == null) return ApiResponse.error("Maskan topilmadi");
 
-        // OWNER faqat o'z resortiga rasm yuklay oladi
         Admin admin = adminRepository.findById(adminId).orElse(null);
-        if (admin == null) return ApiResponse.builder()
-                .status(false).message("Admin topilmadi").build();
+        if (admin == null) return ApiResponse.error("Admin topilmadi");
 
         boolean isSuperAdmin = admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !resort.getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
-
-        if (file.isEmpty()) return ApiResponse.builder()
-                .status(false).message("Fayl bo'sh").build();
+            return ApiResponse.error("Ruxsat yo'q");
+        if (file.isEmpty()) return ApiResponse.error("Fayl bo'sh");
 
         String ext = getExtension(file.getOriginalFilename());
-        if (!isAllowedExtension(ext)) return ApiResponse.builder()
-                .status(false).message("Faqat jpg, jpeg, png, webp formatlar ruxsat etilgan").build();
+        if (!isAllowedExtension(ext))
+            return ApiResponse.error("Faqat jpg, jpeg, png, webp formatlar ruxsat etilgan");
 
         try {
             String folderPath = uploadDir + File.separator + "resorts" + File.separator + resortId;
@@ -78,9 +67,7 @@ public class PhotoService {
 
             String url = baseUrl + "/uploads/resorts/" + resortId + "/" + fileName;
 
-            if (Boolean.TRUE.equals(isCover)) {
-                photoRepository.removeCoverByResortId(resortId);
-            }
+            if (Boolean.TRUE.equals(isCover)) photoRepository.removeCoverByResortId(resortId);
 
             int sortOrder = photoRepository.countByResortId(resortId);
 
@@ -93,89 +80,59 @@ public class PhotoService {
                     .build();
 
             photoRepository.save(photo);
-            log.info("Rasm yuklandi: {}", url);
-
-            return ApiResponse.builder()
-                    .status(true).message("Rasm yuklandi").data(toDTO(photo)).build();
-
+            return ApiResponse.ok("Rasm yuklandi", toDTO(photo));
         } catch (IOException e) {
             log.error("Rasm yuklashda xato: {}", e.getMessage());
-            return ApiResponse.builder()
-                    .status(false).message("Rasm yuklashda xato yuz berdi").build();
+            return ApiResponse.error("Rasm yuklashda xato yuz berdi");
         }
     }
 
-    // ================================================
-    //  RASMLAR RO'YXATI
-    // ================================================
-
     public ApiResponse getByResort(Long resortId) {
-        List<PhotoResponseDTO
-                > list = photoRepository
+        List<PhotoResponseDTO> list = photoRepository
                 .findByResortIdOrderBySortOrderAsc(resortId)
                 .stream().map(this::toDTO).collect(Collectors.toList());
-        return ApiResponse.builder().status(true).message("OK").data(list).build();
+        return ApiResponse.ok(list);
     }
-
-    // ================================================
-    //  COVER QILISH
-    // ================================================
 
     @Transactional
     public ApiResponse setCover(Long photoId, Long adminId) {
         Photo photo = photoRepository.findById(photoId).orElse(null);
-        if (photo == null) return ApiResponse.builder()
-                .status(false).message("Rasm topilmadi").build();
+        if (photo == null) return ApiResponse.error("Rasm topilmadi");
 
-        // OWNER faqat o'z resortining rasmini cover qila oladi
         Admin admin = adminRepository.findById(adminId).orElse(null);
         boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !photo.getResort().getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
+            return ApiResponse.error("Ruxsat yo'q");
 
         photoRepository.removeCoverByResortId(photo.getResort().getId());
         photo.setIsCover(true);
         photoRepository.save(photo);
-        return ApiResponse.builder().status(true).message("Cover rasm o'rnatildi").build();
+        return ApiResponse.ok("Cover rasm o'rnatildi");
     }
-
-    // ================================================
-    //  RASM O'CHIRISH
-    // ================================================
 
     @Transactional
     public ApiResponse delete(Long photoId, Long adminId) {
         Photo photo = photoRepository.findById(photoId).orElse(null);
-        if (photo == null) return ApiResponse.builder()
-                .status(false).message("Rasm topilmadi").build();
+        if (photo == null) return ApiResponse.error("Rasm topilmadi");
 
-        // OWNER faqat o'z resortining rasmini o'chira oladi
         Admin admin = adminRepository.findById(adminId).orElse(null);
         boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !photo.getResort().getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
+            return ApiResponse.error("Ruxsat yo'q");
 
-        // Serverdan faylni o'chirish
         try {
             String filePath = photo.getUrl()
                     .replace(baseUrl + "/uploads", uploadDir)
                     .replace("/", File.separator);
             Path path = Paths.get(filePath);
-            if (Files.exists(path)) {
-                Files.delete(path);
-                log.info("Fayl o'chirildi: {}", filePath);
-            }
+            if (Files.exists(path)) Files.delete(path);
         } catch (IOException e) {
             log.warn("Faylni o'chirishda xato: {}", e.getMessage());
         }
 
         photoRepository.deleteById(photoId);
-        return ApiResponse.builder().status(true).message("Rasm o'chirildi").build();
+        return ApiResponse.ok("Rasm o'chirildi");
     }
-
-    // ================================================
-    //  YORDAMCHI METODLAR
-    // ================================================
 
     private String getExtension(String fileName) {
         if (fileName == null || !fileName.contains(".")) return "";
@@ -183,8 +140,7 @@ public class PhotoService {
     }
 
     private boolean isAllowedExtension(String ext) {
-        return ext.equals("jpg") || ext.equals("jpeg")
-                || ext.equals("png") || ext.equals("webp");
+        return ext.equals("jpg") || ext.equals("jpeg") || ext.equals("png") || ext.equals("webp");
     }
 
     private PhotoResponseDTO toDTO(Photo p) {

@@ -1,4 +1,4 @@
-package com.example.resort_uz.dto.response;
+package com.example.resort_uz.dto;
 
 import com.example.resort_uz.entity.Resort;
 import lombok.*;
@@ -21,7 +21,7 @@ public class ResortCardDTO {
     private Integer reviewCount;
     private Boolean featured;
     private String coverImageUrl;
-
+    private boolean active;
     // Foydalanuvchidan masofasi (km) — userLat/userLon yuborilsa hisoblanadi
     private Double distanceKm;
 

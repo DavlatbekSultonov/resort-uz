@@ -22,20 +22,16 @@ import java.util.stream.Collectors;
 public class ResortService {
 
     private final ResortRepository resortRepository;
-    private final RegionRepository regionRepository;
     private final AdminRepository adminRepository;
     private final AmenityRepository amenityRepository;
     private final PhotoRepository photoRepository;
     private final BookingRepository bookingRepository;
 
-    // ================================================
-    //  USER PANEL
-    // ================================================
-
     public ApiResponse getAll(Pageable pageable) {
-        Page<com.example.resort_uz.dto.response.ResortCardDTO> page = resortRepository.findByActiveTrue(pageable)
+        Page<ResortCardDTO> page = resortRepository
+                .findByActiveTrue(pageable)
                 .map(r -> toCardDTO(r, null, null, null));
-        return ApiResponse.builder().status(true).message("OK").data(page).build();
+        return ApiResponse.ok(page);
     }
 
     public ApiResponse filter(Long regionId, String resortType,
@@ -44,63 +40,79 @@ public class ResortService {
                               LocalDate checkIn, LocalDate checkOut,
                               Double userLat, Double userLon,
                               Pageable pageable) {
+
         Resort.ResortType type = null;
         if (resortType != null && !resortType.isBlank()) {
             try { type = Resort.ResortType.valueOf(resortType); }
             catch (IllegalArgumentException ignored) {}
         }
 
-        Page<com.example.resort_uz.dto.response.ResortCardDTO> page = resortRepository
-                .findWithFilters(regionId, type, minPrice, maxPrice, search, checkIn, checkOut, pageable)
-                .map(r -> toCardDTO(r, checkIn, checkOut, userLat != null && userLon != null
-                        ? new double[]{userLat, userLon} : null));
+        RegionEnum region = null;
+        if (regionId != null) {
+            for (RegionEnum re : RegionEnum.values()) {
+                if (re.getId() == regionId.intValue()) { region = re; break; }
+            }
+        }
 
-        return ApiResponse.builder().status(true).message("OK").data(page).build();
+        String searchParam = (search != null && !search.isBlank()) ? search : null;
+        String regionStr = region != null ? region.name() : null;
+        String typeStr = type != null ? type.name() : null;
+        String checkInStr = checkIn != null ? checkIn.toString() : null;
+        String checkOutStr = checkOut != null ? checkOut.toString() : null;
+
+        Page<ResortCardDTO> page = resortRepository
+                .findWithFilters(regionStr, typeStr, minPrice, maxPrice, searchParam, checkInStr, checkOutStr, pageable)
+                .map(r -> toCardDTO(r, checkIn, checkOut,
+                        userLat != null && userLon != null ? new double[]{userLat, userLon} : null));
+
+        return ApiResponse.ok(page);
     }
 
     public ApiResponse getById(Long id) {
         Resort resort = resortRepository.findById(id).orElse(null);
-        if (resort == null || !resort.getActive()) return ApiResponse.builder()
-                .status(false).message("Maskan topilmadi").build();
-        return ApiResponse.builder().status(true).message("OK").data(toResponseDTO(resort)).build();
+        if (resort == null || !resort.getActive())
+            return ApiResponse.error("Maskan topilmadi");
+        return ApiResponse.ok(toResponseDTO(resort));
     }
 
     public ApiResponse getFeatured() {
-        List<com.example.resort_uz.dto.response.ResortCardDTO> list = resortRepository
+        List<ResortCardDTO> list = resortRepository
                 .findByFeaturedTrueAndActiveTrueOrderByAverageRatingDesc()
                 .stream().map(r -> toCardDTO(r, null, null, null))
                 .collect(Collectors.toList());
-        return ApiResponse.builder().status(true).message("OK").data(list).build();
+        return ApiResponse.ok(list);
     }
 
-    // ================================================
-    //  ADMIN PANEL
-    // ================================================
-
     public ApiResponse getByAdmin(Long adminId, Pageable pageable) {
-        Page<com.example.resort_uz.dto.response.ResortCardDTO> page = resortRepository.findByAdminId(adminId, pageable)
-                .map(r -> toCardDTO(r, null, null, null));
-        return ApiResponse.builder().status(true).message("OK").data(page).build();
+        Admin admin = adminRepository.findById(adminId).orElse(null);
+        if (admin == null) return ApiResponse.error("Admin topilmadi");
+
+        Page<ResortCardDTO> page;
+        if (admin.getRole() == Admin.AdminRole.SUPERADMIN) {
+            // SUPERADMIN barcha maskanlarni ko'radi
+            page = resortRepository.findAll(pageable).map(r -> toCardDTO(r, null, null, null));
+        } else {
+            page = resortRepository.findByAdminId(adminId, pageable)
+                    .map(r -> toCardDTO(r, null, null, null));
+        }
+        return ApiResponse.ok(page);
     }
 
     @Transactional
     public ApiResponse create(ResortRequestDTO dto, Long adminId) {
         Admin requestingAdmin = adminRepository.findById(adminId).orElse(null);
-        if (requestingAdmin == null) return ApiResponse.builder()
-                .status(false).message("Admin topilmadi").build();
+        if (requestingAdmin == null) return ApiResponse.error("Admin topilmadi");
 
         Admin owner;
         if (requestingAdmin.getRole() == Admin.AdminRole.SUPERADMIN && dto.getOwnerId() != null) {
             owner = adminRepository.findById(dto.getOwnerId()).orElse(null);
-            if (owner == null) return ApiResponse.builder()
-                    .status(false).message("Owner topilmadi").build();
+            if (owner == null) return ApiResponse.error("Owner topilmadi");
         } else {
             owner = requestingAdmin;
         }
 
-        Region region = regionRepository.findById(dto.getRegionId()).orElse(null);
-        if (region == null) return ApiResponse.builder()
-                .status(false).message("Viloyat topilmadi").build();
+        RegionEnum region = findRegion(dto.getRegionId());
+        if (region == null) return ApiResponse.error("Viloyat topilmadi");
 
         List<Amenity> amenities = new ArrayList<>();
         if (dto.getAmenityIds() != null && !dto.getAmenityIds().isEmpty()) {
@@ -139,27 +151,23 @@ public class ResortService {
                 .build();
 
         resortRepository.save(resort);
-        return ApiResponse.builder().status(true).message("Maskan qo'shildi")
-                .data(toResponseDTO(resort)).build();
+        return ApiResponse.ok("Maskan qo'shildi", toResponseDTO(resort));
     }
 
     @Transactional
     public ApiResponse update(Long id, ResortRequestDTO dto, Long adminId) {
         Resort resort = resortRepository.findById(id).orElse(null);
-        if (resort == null) return ApiResponse.builder()
-                .status(false).message("Maskan topilmadi").build();
+        if (resort == null) return ApiResponse.error("Maskan topilmadi");
 
         Admin admin = adminRepository.findById(adminId).orElse(null);
-        if (admin == null) return ApiResponse.builder()
-                .status(false).message("Admin topilmadi").build();
+        if (admin == null) return ApiResponse.error("Admin topilmadi");
 
         boolean isSuperAdmin = admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !resort.getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
+            return ApiResponse.error("Ruxsat yo'q");
 
-        Region region = regionRepository.findById(dto.getRegionId()).orElse(null);
-        if (region == null) return ApiResponse.builder()
-                .status(false).message("Viloyat topilmadi").build();
+        RegionEnum region = findRegion(dto.getRegionId());
+        if (region == null) return ApiResponse.error("Viloyat topilmadi");
 
         resort.setRegion(region);
         resort.setName(dto.getName());
@@ -192,45 +200,48 @@ public class ResortService {
         }
 
         resortRepository.save(resort);
-        return ApiResponse.builder().status(true).message("Maskan yangilandi")
-                .data(toResponseDTO(resort)).build();
+        return ApiResponse.ok("Maskan yangilandi", toResponseDTO(resort));
     }
 
     @Transactional
     public ApiResponse delete(Long id, Long adminId) {
         Resort resort = resortRepository.findById(id).orElse(null);
-        if (resort == null) return ApiResponse.builder()
-                .status(false).message("Maskan topilmadi").build();
+        if (resort == null) return ApiResponse.error("Maskan topilmadi");
 
         Admin admin = adminRepository.findById(adminId).orElse(null);
         boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !resort.getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
+            return ApiResponse.error("Ruxsat yo'q");
 
         resortRepository.deleteById(id);
-        return ApiResponse.builder().status(true).message("Maskan o'chirildi").build();
+        return ApiResponse.ok("Maskan o'chirildi");
     }
 
     @Transactional
     public ApiResponse toggleActive(Long id) {
         Resort resort = resortRepository.findById(id).orElse(null);
-        if (resort == null) return ApiResponse.builder()
-                .status(false).message("Maskan topilmadi").build();
+        if (resort == null) return ApiResponse.error("Maskan topilmadi");
         resort.setActive(!resort.getActive());
         resortRepository.save(resort);
-        return ApiResponse.builder().status(true)
-                .message(resort.getActive() ? "Maskan faollashtirildi" : "Maskan o'chirildi").build();
+        return ApiResponse.ok(resort.getActive() ? "Maskan faollashtirildi" : "Maskan o'chirildi");
     }
 
     // ================================================
-    //  ENTITY -> DTO
+    //  YORDAMCHI METODLAR
     // ================================================
 
-    private com.example.resort_uz.dto.response.ResortCardDTO toCardDTO(Resort r, LocalDate checkIn, LocalDate checkOut, double[] userCoords) {
+    private RegionEnum findRegion(Long regionId) {
+        if (regionId == null) return null;
+        for (RegionEnum re : RegionEnum.values()) {
+            if (re.getId() == regionId.intValue()) return re;
+        }
+        return null;
+    }
+
+    private ResortCardDTO toCardDTO(Resort r, LocalDate checkIn, LocalDate checkOut, double[] userCoords) {
         String cover = photoRepository.findByResortIdAndIsCoverTrue(r.getId())
                 .map(Photo::getUrl).orElse(null);
 
-        // availableToday — MEHMONXONA, SANATORIY uchun null
         Boolean availableToday = null;
         boolean needsCalendar = r.getResortType() != Resort.ResortType.MEHMONXONA
                 && r.getResortType() != Resort.ResortType.SANATORIY;
@@ -238,17 +249,15 @@ public class ResortService {
         if (needsCalendar) {
             LocalDate from = checkIn != null ? checkIn : LocalDate.now();
             LocalDate to = checkOut != null ? checkOut : LocalDate.now().plusDays(1);
-            boolean booked = bookingRepository.isResortBooked(r.getId(), from, to);
-            availableToday = !booked;
+            availableToday = !bookingRepository.isResortBooked(r.getId(), from, to);
         }
 
-        // Masofa hisoblash — userCoords yuborilsa
         Double distanceKm = null;
         if (userCoords != null && r.getLatitude() != null && r.getLongitude() != null) {
             distanceKm = haversineKm(userCoords[0], userCoords[1], r.getLatitude(), r.getLongitude());
         }
 
-        return com.example.resort_uz.dto.response.ResortCardDTO.builder()
+        return ResortCardDTO.builder()
                 .id(r.getId())
                 .name(r.getName())
                 .resortType(r.getResortType())
@@ -262,10 +271,10 @@ public class ResortService {
                 .coverImageUrl(cover)
                 .availableToday(availableToday)
                 .distanceKm(distanceKm != null ? Math.round(distanceKm * 10.0) / 10.0 : null)
+                .active(r.getActive())
                 .build();
     }
 
-    // Haversine formulasi — ikki nuqta orasidagi masofa (km)
     private double haversineKm(double lat1, double lon1, double lat2, double lon2) {
         final int R = 6371;
         double dLat = Math.toRadians(lat2 - lat1);
@@ -273,8 +282,7 @@ public class ResortService {
         double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
                 + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
                 * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
     private ResortResponseDTO toResponseDTO(Resort r) {
@@ -284,12 +292,9 @@ public class ResortService {
         List<PhotoResponseDTO> photos = photoRepository
                 .findByResortIdOrderBySortOrderAsc(r.getId())
                 .stream().map(p -> PhotoResponseDTO.builder()
-                        .id(p.getId())
-                        .url(p.getUrl())
-                        .isCover(p.getIsCover())
-                        .sortOrder(p.getSortOrder())
-                        .caption(p.getCaption())
-                        .uploadedAt(p.getUploadedAt())
+                        .id(p.getId()).url(p.getUrl())
+                        .isCover(p.getIsCover()).sortOrder(p.getSortOrder())
+                        .caption(p.getCaption()).uploadedAt(p.getUploadedAt())
                         .build())
                 .collect(Collectors.toList());
 
@@ -317,7 +322,7 @@ public class ResortService {
                 .shortDescription(r.getShortDescription())
                 .fullDescription(r.getFullDescription())
                 .resortType(r.getResortType())
-                .regionId(r.getRegion() != null ? r.getRegion().getId() : null)
+                .regionId(r.getRegion() != null ? (long) r.getRegion().getId() : null)
                 .regionName(r.getRegion() != null ? r.getRegion().getName() : null)
                 .address(r.getAddress())
                 .latitude(r.getLatitude())

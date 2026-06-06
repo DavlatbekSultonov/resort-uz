@@ -1,4 +1,5 @@
 package com.example.resort_uz.controller;
+import com.example.resort_uz.common.ApiResponse;
 import com.example.resort_uz.dto.AdminRequestDTO;
 import com.example.resort_uz.service.Adminservice;
 import io.swagger.v3.oas.annotations.Operation;
@@ -8,7 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
-import com.example.resort_uz.common.ApiResponse;
+
 @Tag(name = "Adminlar", description = "Admin boshqaruvi")
 @RestController
 @RequestMapping("/admins")

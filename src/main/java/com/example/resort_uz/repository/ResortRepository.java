@@ -1,5 +1,6 @@
 package com.example.resort_uz.repository;
 
+import com.example.resort_uz.entity.RegionEnum;
 import com.example.resort_uz.entity.Resort;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -17,41 +18,69 @@ import java.util.List;
 public interface ResortRepository extends JpaRepository<Resort, Long> {
 
     Page<Resort> findByActiveTrue(Pageable pageable);
-    Page<Resort> findByRegionIdAndActiveTrue(Long regionId, Pageable pageable);
+    Page<Resort> findByRegionAndActiveTrue(RegionEnum region, Pageable pageable);
     List<Resort> findByFeaturedTrueAndActiveTrueOrderByAverageRatingDesc();
     Page<Resort> findByAdminId(Long adminId, Pageable pageable);
-    long countByRegionIdAndActiveTrue(Long regionId);
+    long countByRegionAndActiveTrue(RegionEnum region);
 
-    @Query("""
-            SELECT r FROM Resort r
+    @Query(value = """
+            SELECT r.* FROM resorts r
             WHERE r.active = true
-              AND (:regionId IS NULL OR r.region.id = :regionId)
-              AND (:resortType IS NULL OR r.resortType = :resortType)
-              AND (:minPrice IS NULL OR r.pricePerNightMin >= :minPrice)
-              AND (:maxPrice IS NULL OR r.pricePerNightMin <= :maxPrice)
-              AND (:search IS NULL OR LOWER(r.name) LIKE LOWER(CONCAT('%', :search, '%')))
+              AND (CAST(:region AS text) IS NULL OR r.region = CAST(:region AS text))
+              AND (CAST(:resortType AS text) IS NULL OR r.resort_type = CAST(:resortType AS text))
+              AND (CAST(:minPrice AS numeric) IS NULL OR r.price_per_night_min >= CAST(:minPrice AS numeric))
+              AND (CAST(:maxPrice AS numeric) IS NULL OR r.price_per_night_min <= CAST(:maxPrice AS numeric))
               AND (
-                :checkIn IS NULL OR :checkOut IS NULL
-                OR r.resortType = com.example.resort_uz.entity.Resort.ResortType.MEHMONXONA
-                OR r.resortType = com.example.resort_uz.entity.Resort.ResortType.SANATORIY
+                CAST(:search AS text) IS NULL
+                OR LOWER(r.name) LIKE LOWER('%' || CAST(:search AS text) || '%')
+                OR LOWER(COALESCE(r.address, '')) LIKE LOWER('%' || CAST(:search AS text) || '%')
+              )
+              AND (
+                CAST(:checkIn AS date) IS NULL OR CAST(:checkOut AS date) IS NULL
+                OR r.resort_type IN ('MEHMONXONA', 'SANATORIY')
                 OR NOT EXISTS (
-                    SELECT b FROM Booking b
-                    WHERE b.resort.id = r.id
-                      AND b.status = com.example.resort_uz.entity.Booking.BookingStatus.TASDIQLANGAN
-                      AND b.checkInDate < :checkOut
-                      AND b.checkOutDate > :checkIn
+                    SELECT 1 FROM bookings b
+                    WHERE b.resort_id = r.id
+                      AND b.status = 'TASDIQLANGAN'
+                      AND b.check_in_date < CAST(:checkOut AS date)
+                      AND b.check_out_date > CAST(:checkIn AS date)
                 )
               )
-            ORDER BY r.averageRating DESC
-            """)
+            ORDER BY r.featured DESC, r.average_rating DESC
+            """,
+            countQuery = """
+            SELECT COUNT(*) FROM resorts r
+            WHERE r.active = true
+              AND (CAST(:region AS text) IS NULL OR r.region = CAST(:region AS text))
+              AND (CAST(:resortType AS text) IS NULL OR r.resort_type = CAST(:resortType AS text))
+              AND (CAST(:minPrice AS numeric) IS NULL OR r.price_per_night_min >= CAST(:minPrice AS numeric))
+              AND (CAST(:maxPrice AS numeric) IS NULL OR r.price_per_night_min <= CAST(:maxPrice AS numeric))
+              AND (
+                CAST(:search AS text) IS NULL
+                OR LOWER(r.name) LIKE LOWER('%' || CAST(:search AS text) || '%')
+                OR LOWER(COALESCE(r.address, '')) LIKE LOWER('%' || CAST(:search AS text) || '%')
+              )
+              AND (
+                CAST(:checkIn AS date) IS NULL OR CAST(:checkOut AS date) IS NULL
+                OR r.resort_type IN ('MEHMONXONA', 'SANATORIY')
+                OR NOT EXISTS (
+                    SELECT 1 FROM bookings b
+                    WHERE b.resort_id = r.id
+                      AND b.status = 'TASDIQLANGAN'
+                      AND b.check_in_date < CAST(:checkOut AS date)
+                      AND b.check_out_date > CAST(:checkIn AS date)
+                )
+              )
+            """,
+            nativeQuery = true)
     Page<Resort> findWithFilters(
-            @Param("regionId") Long regionId,
-            @Param("resortType") Resort.ResortType resortType,
+            @Param("region") String region,
+            @Param("resortType") String resortType,
             @Param("minPrice") BigDecimal minPrice,
             @Param("maxPrice") BigDecimal maxPrice,
             @Param("search") String search,
-            @Param("checkIn") LocalDate checkIn,
-            @Param("checkOut") LocalDate checkOut,
+            @Param("checkIn") String checkIn,
+            @Param("checkOut") String checkOut,
             Pageable pageable);
 
     @Modifying

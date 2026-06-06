@@ -24,12 +24,10 @@ public class ReviewService {
     private final ResortRepository resortRepository;
     private final AdminRepository adminRepository;
 
-    // Sharh qo'shish (mehmon — token shart emas)
     @Transactional
     public ApiResponse create(ReviewRequestDTO dto) {
         Resort resort = resortRepository.findById(dto.getResortId()).orElse(null);
-        if (resort == null) return ApiResponse.builder()
-                .status(false).message("Maskan topilmadi").build();
+        if (resort == null) return ApiResponse.error("Maskan topilmadi");
 
         Review review = Review.builder()
                 .resort(resort)
@@ -41,36 +39,30 @@ public class ReviewService {
 
         reviewRepository.save(review);
         resortRepository.updateRating(resort.getId());
-
-        return ApiResponse.builder()
-                .status(true).message("Sharh yuborildi").data(toDTO(review)).build();
+        return ApiResponse.ok("Sharh yuborildi", toDTO(review));
     }
 
-    // Maskan sharhlari (user panel)
     public ApiResponse getByResort(Long resortId) {
         List<ReviewResponseDTO> list = reviewRepository
                 .findByResortIdAndApprovedTrue(resortId)
                 .stream().map(this::toDTO).collect(Collectors.toList());
-        return ApiResponse.builder().status(true).message("OK").data(list).build();
+        return ApiResponse.ok(list);
     }
 
-    // O'chirish — OWNER faqat o'z resortining sharhini o'chiradi
     @Transactional
     public ApiResponse delete(Long id, Long adminId) {
         Review review = reviewRepository.findById(id).orElse(null);
-        if (review == null) return ApiResponse.builder()
-                .status(false).message("Sharh topilmadi").build();
+        if (review == null) return ApiResponse.error("Sharh topilmadi");
 
         Admin admin = adminRepository.findById(adminId).orElse(null);
         boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !review.getResort().getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
+            return ApiResponse.error("Ruxsat yo'q");
 
         Long resortId = review.getResort().getId();
         reviewRepository.deleteById(id);
         resortRepository.updateRating(resortId);
-
-        return ApiResponse.builder().status(true).message("Sharh o'chirildi").build();
+        return ApiResponse.ok("Sharh o'chirildi");
     }
 
     private ReviewResponseDTO toDTO(Review r) {

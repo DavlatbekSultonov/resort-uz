@@ -22,7 +22,7 @@ public class Booking {
     private Long id;
 
     // Qaysi maskanga band qilish
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "resort_id", nullable = false)
     private Resort resort;
 

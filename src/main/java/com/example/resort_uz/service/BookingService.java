@@ -28,28 +28,22 @@ public class BookingService {
     private final BookingRepository bookingRepository;
     private final ResortRepository resortRepository;
     private final AdminRepository adminRepository;
-    private final SmsService smsService;
+    private final TelegramService telegramService;
 
-    // Mehmon band qiladi (token shart emas)
     @Transactional
     public ApiResponse create(BookingRequestDTO dto) {
         Resort resort = resortRepository.findById(dto.getResortId()).orElse(null);
-        if (resort == null) return ApiResponse.builder()
-                .status(false).message("Maskan topilmadi").build();
-        if (!resort.getActive()) return ApiResponse.builder()
-                .status(false).message("Maskan faol emas").build();
+        if (resort == null) return ApiResponse.error("Maskan topilmadi");
+        if (!resort.getActive()) return ApiResponse.error("Maskan faol emas");
 
         if (!dto.getCheckOutDate().isAfter(dto.getCheckInDate()))
-            return ApiResponse.builder()
-                    .status(false).message("Ketish sanasi kelish sanasidan keyin bo'lishi kerak").build();
+            return ApiResponse.error("Ketish sanasi kelish sanasidan keyin bo'lishi kerak");
         if (dto.getCheckInDate().isBefore(LocalDate.now()))
-            return ApiResponse.builder()
-                    .status(false).message("O'tgan sanaga band qilib bo'lmaydi").build();
+            return ApiResponse.error("O'tgan sanaga band qilib bo'lmaydi");
 
         boolean isBooked = bookingRepository.isResortBooked(
                 dto.getResortId(), dto.getCheckInDate(), dto.getCheckOutDate());
-        if (isBooked) return ApiResponse.builder()
-                .status(false).message("Tanlangan sanalar band qilingan").build();
+        if (isBooked) return ApiResponse.error("Tanlangan sanalar band qilingan");
 
         long nights = ChronoUnit.DAYS.between(dto.getCheckInDate(), dto.getCheckOutDate());
         BigDecimal totalPrice = resort.getPricePerNightMin() != null
@@ -72,98 +66,119 @@ public class BookingService {
                 .build();
 
         bookingRepository.save(booking);
-        smsService.sendBookingConfirmation(booking);
+        try { telegramService.sendNewBooking(booking); } catch (Exception ignored) {}
 
-        return ApiResponse.builder()
-                .status(true).message("Band qilish so'rovi yuborildi").data(toDTO(booking)).build();
+        return ApiResponse.ok("Band qilish so'rovi yuborildi. Admin tez orada bog'lanadi!", toDTO(booking));
     }
 
-    // OWNER o'z resortining bookinglarini ko'radi
+    // Barcha bronlar — status filter bilan
+    public ApiResponse getAll(Long adminId, String status, Pageable pageable) {
+        Admin admin = adminRepository.findById(adminId).orElse(null);
+        if (admin == null) return ApiResponse.error("Admin topilmadi");
+
+        Booking.BookingStatus bookingStatus = null;
+        if (status != null && !status.isBlank()) {
+            try { bookingStatus = Booking.BookingStatus.valueOf(status); }
+            catch (IllegalArgumentException ignored) {}
+        }
+
+        boolean isSuperAdmin = admin.getRole() == Admin.AdminRole.SUPERADMIN;
+        Page<BookingResponseDTO> page;
+
+        if (bookingStatus != null) {
+            page = isSuperAdmin
+                    ? bookingRepository.findByStatus(bookingStatus, pageable).map(this::toDTO)
+                    : bookingRepository.findByResortAdminIdAndStatus(adminId, bookingStatus, pageable).map(this::toDTO);
+        } else {
+            page = isSuperAdmin
+                    ? bookingRepository.findAll(pageable).map(this::toDTO)
+                    : bookingRepository.findByResortAdminId(adminId, pageable).map(this::toDTO);
+        }
+        return ApiResponse.ok(page);
+    }
+
     public ApiResponse getByResort(Long resortId, Long adminId, Pageable pageable) {
         Resort resort = resortRepository.findById(resortId).orElse(null);
-        if (resort == null) return ApiResponse.builder()
-                .status(false).message("Maskan topilmadi").build();
+        if (resort == null) return ApiResponse.error("Maskan topilmadi");
 
         Admin admin = adminRepository.findById(adminId).orElse(null);
         boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !resort.getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
+            return ApiResponse.error("Ruxsat yo'q");
 
-        Page<BookingResponseDTO> page = bookingRepository
-                .findByResortId(resortId, pageable).map(this::toDTO);
-        return ApiResponse.builder().status(true).message("OK").data(page).build();
+        Page<BookingResponseDTO> page = bookingRepository.findByResortId(resortId, pageable).map(this::toDTO);
+        return ApiResponse.ok(page);
     }
 
-    // Kutilayotgan bookinglar — SUPERADMIN barcha, OWNER faqat o'ziniki
     public ApiResponse getPending(Long adminId, Pageable pageable) {
         Admin admin = adminRepository.findById(adminId).orElse(null);
-        if (admin == null) return ApiResponse.builder()
-                .status(false).message("Admin topilmadi").build();
+        if (admin == null) return ApiResponse.error("Admin topilmadi");
 
         Page<BookingResponseDTO> page;
         if (admin.getRole() == Admin.AdminRole.SUPERADMIN) {
-            page = bookingRepository
-                    .findByStatus(Booking.BookingStatus.KUTILMOQDA, pageable).map(this::toDTO);
+            page = bookingRepository.findByStatus(Booking.BookingStatus.KUTILMOQDA, pageable).map(this::toDTO);
         } else {
-            page = bookingRepository
-                    .findByResortAdminIdAndStatus(adminId, Booking.BookingStatus.KUTILMOQDA, pageable)
-                    .map(this::toDTO);
+            page = bookingRepository.findByResortAdminIdAndStatus(adminId, Booking.BookingStatus.KUTILMOQDA, pageable).map(this::toDTO);
         }
-        return ApiResponse.builder().status(true).message("OK").data(page).build();
+        return ApiResponse.ok(page);
     }
 
-    // OWNER faqat o'z resortining bookingini tasdiqlaydi
     @Transactional
     public ApiResponse confirm(Long id, String note, Long adminId) {
         Booking booking = bookingRepository.findById(id).orElse(null);
-        if (booking == null) return ApiResponse.builder()
-                .status(false).message("Band qilish topilmadi").build();
+        if (booking == null) return ApiResponse.error("Band qilish topilmadi");
 
         Admin admin = adminRepository.findById(adminId).orElse(null);
         boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !booking.getResort().getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
-
+            return ApiResponse.error("Ruxsat yo'q");
         if (booking.getStatus() != Booking.BookingStatus.KUTILMOQDA)
-            return ApiResponse.builder()
-                    .status(false).message("Bu band qilish allaqachon " + booking.getStatus()).build();
+            return ApiResponse.error("Bu bron allaqachon " + booking.getStatus());
 
         booking.setStatus(Booking.BookingStatus.TASDIQLANGAN);
         bookingRepository.save(booking);
-        smsService.sendBookingStatusUpdate(booking, note);
-
-        return ApiResponse.builder().status(true).message("Band qilish tasdiqlandi").build();
+        return ApiResponse.ok("Band qilish tasdiqlandi");
     }
 
-    // OWNER faqat o'z resortining bookingini bekor qiladi
+    // Bronni yakunlash
     @Transactional
-    public ApiResponse cancel(Long id, String reason, Long adminId) {
+    public ApiResponse complete(Long id, Long adminId) {
         Booking booking = bookingRepository.findById(id).orElse(null);
-        if (booking == null) return ApiResponse.builder()
-                .status(false).message("Band qilish topilmadi").build();
+        if (booking == null) return ApiResponse.error("Band qilish topilmadi");
 
         Admin admin = adminRepository.findById(adminId).orElse(null);
         boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
         if (!isSuperAdmin && !booking.getResort().getAdmin().getId().equals(adminId))
-            return ApiResponse.builder().status(false).message("Ruxsat yo'q").build();
+            return ApiResponse.error("Ruxsat yo'q");
 
+        booking.setStatus(Booking.BookingStatus.YAKUNLANGAN);
+        bookingRepository.save(booking);
+        return ApiResponse.ok("Bron yakunlandi");
+    }
+
+    @Transactional
+    public ApiResponse cancel(Long id, String reason, Long adminId) {
+        Booking booking = bookingRepository.findById(id).orElse(null);
+        if (booking == null) return ApiResponse.error("Band qilish topilmadi");
+
+        Admin admin = adminRepository.findById(adminId).orElse(null);
+        boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
+        if (!isSuperAdmin && !booking.getResort().getAdmin().getId().equals(adminId))
+            return ApiResponse.error("Ruxsat yo'q");
         if (booking.getStatus() == Booking.BookingStatus.YAKUNLANGAN)
-            return ApiResponse.builder()
-                    .status(false).message("Yakunlangan band qilishni bekor qilib bo'lmaydi").build();
+            return ApiResponse.error("Yakunlangan bronni bekor qilib bo'lmaydi");
 
         booking.setStatus(Booking.BookingStatus.BEKOR_QILINGAN);
         booking.setCancelReason(reason);
         bookingRepository.save(booking);
-        smsService.sendBookingStatusUpdate(booking, reason);
-
-        return ApiResponse.builder().status(true).message("Band qilish bekor qilindi").build();
+        return ApiResponse.ok("Band qilish bekor qilindi");
     }
 
     public ApiResponse getActiveBookings(Long resortId) {
         List<BookingResponseDTO> list = bookingRepository
                 .findActiveBookings(resortId, LocalDate.now())
                 .stream().map(this::toDTO).collect(Collectors.toList());
-        return ApiResponse.builder().status(true).message("OK").data(list).build();
+        return ApiResponse.ok(list);
     }
 
     private BookingResponseDTO toDTO(Booking b) {

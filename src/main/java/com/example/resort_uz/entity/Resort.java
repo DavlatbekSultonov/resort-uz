@@ -26,9 +26,9 @@ public class Resort {
     @JoinColumn(name = "admin_id", nullable = false)
     private Admin admin;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "region_id", nullable = false)
-    private Region region;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "region", nullable = false, length = 50)
+    private RegionEnum region;
 
     @NotBlank
     @Column(nullable = false, length = 200)
@@ -60,7 +60,7 @@ public class Resort {
     @Column(name = "price_per_night_max")
     private BigDecimal pricePerNightMax;
 
-    @Column(length = 5)
+    @Column(length = 10)
     @Builder.Default
     private String currency = "UZS";
 
@@ -151,13 +151,7 @@ public class Resort {
     private List<Amenity> amenities = new ArrayList<>();
 
     public enum ResortType {
-        DAM_OLISH_MASKANI,
-        SANATORIY,
-        MEHMONXONA,
-        KOTEJ,
-        TURISTIK_BAZA,
-        AGROTURIZM,
-        TOGLIK_RESORT,
-        SUV_YONI_RESORT
+        DAM_OLISH_MASKANI, SANATORIY, MEHMONXONA, KOTEJ,
+        TURISTIK_BAZA, AGROTURIZM, TOGLIK_RESORT, SUV_YONI_RESORT
     }
 }
