@@ -57,8 +57,15 @@ public class PhotoService {
                     .isCover(isCover)
                     .build();
 
-            photoRepository.save(photo);
-            return ApiResponse.ok("Rasm yuklandi", photo);
+            Photo saved = photoRepository.save(photo);
+            java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();
+            map.put("id", saved.getId());
+            map.put("url", saved.getUrl());
+            map.put("thumbnailUrl", saved.getThumbnailUrl());
+            map.put("caption", saved.getCaption());
+            map.put("isCover", saved.getIsCover());
+            map.put("sortOrder", saved.getSortOrder());
+            return ApiResponse.ok("Rasm yuklandi", map);
 
         } catch (IOException e) {
             log.error("Rasm yuklashda xato: {}", e.getMessage());
@@ -101,7 +108,17 @@ public class PhotoService {
 
     public ApiResponse getByResort(Long resortId) {
         List<Photo> photos = photoRepository.findByResortIdOrderBySortOrderAsc(resortId);
-        return ApiResponse.ok("Rasmlar", photos);
+        List<java.util.Map<String, Object>> result = photos.stream().map(p -> {
+            java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();
+            map.put("id", p.getId());
+            map.put("url", p.getUrl());
+            map.put("thumbnailUrl", p.getThumbnailUrl());
+            map.put("caption", p.getCaption());
+            map.put("isCover", p.getIsCover());
+            map.put("sortOrder", p.getSortOrder());
+            return map;
+        }).collect(java.util.stream.Collectors.toList());
+        return ApiResponse.ok("Rasmlar", result);
     }
 
     @Transactional
