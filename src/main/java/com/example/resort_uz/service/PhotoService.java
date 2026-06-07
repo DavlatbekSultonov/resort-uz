@@ -1,28 +1,23 @@
 package com.example.resort_uz.service;
 
 import com.example.resort_uz.common.ApiResponse;
-import com.example.resort_uz.dto.PhotoResponseDTO;
-import com.example.resort_uz.entity.Admin;
 import com.example.resort_uz.entity.Photo;
 import com.example.resort_uz.entity.Resort;
-import com.example.resort_uz.repository.AdminRepository;
 import com.example.resort_uz.repository.PhotoRepository;
 import com.example.resort_uz.repository.ResortRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
-import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.util.Base64;
 import java.util.List;
-import java.util.UUID;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -31,128 +26,99 @@ public class PhotoService {
 
     private final PhotoRepository photoRepository;
     private final ResortRepository resortRepository;
-    private final AdminRepository adminRepository;
 
-    @Value("${app.upload.dir}")
-    private String uploadDir;
+    @Value("${imgbb.api.key:b652b80a8cb92deadba86915dae9d7ec}")
+    private String imgbbApiKey;
 
-    @Value("${app.base-url}")
-    private String baseUrl;
+    private static final String IMGBB_UPLOAD_URL = "https://api.imgbb.com/1/upload";
 
     @Transactional
     public ApiResponse upload(Long resortId, MultipartFile file, String caption, Boolean isCover, Long adminId) {
-        Resort resort = resortRepository.findById(resortId).orElse(null);
-        if (resort == null) return ApiResponse.error("Maskan topilmadi");
-
-        Admin admin = adminRepository.findById(adminId).orElse(null);
-        if (admin == null) return ApiResponse.error("Admin topilmadi");
-
-        boolean isSuperAdmin = admin.getRole() == Admin.AdminRole.SUPERADMIN;
-        if (!isSuperAdmin && !resort.getAdmin().getId().equals(adminId))
-            return ApiResponse.error("Ruxsat yo'q");
-        if (file.isEmpty()) return ApiResponse.error("Fayl bo'sh");
-
-        String ext = getExtension(file.getOriginalFilename());
-        if (!isAllowedExtension(ext))
-            return ApiResponse.error("Faqat jpg, jpeg, png, webp formatlar ruxsat etilgan");
-
         try {
-            String folderPath = uploadDir + File.separator + "resorts" + File.separator + resortId;
-            Path folder = Paths.get(folderPath);
-            if (!Files.exists(folder)) Files.createDirectories(folder);
+            Resort resort = resortRepository.findById(resortId).orElse(null);
+            if (resort == null) return ApiResponse.error("Maskan topilmadi");
 
-            String fileName = UUID.randomUUID() + "." + ext;
-            Path filePath = folder.resolve(fileName);
-            Files.write(filePath, file.getBytes());
+            // Faylni Base64 ga o'giramiz
+            byte[] bytes = file.getBytes();
+            String base64 = Base64.getEncoder().encodeToString(bytes);
 
-            String url = baseUrl + "/uploads/resorts/" + resortId + "/" + fileName;
+            // ImgBB ga yuklaymiz
+            String imageUrl = uploadToImgBB(base64, file.getOriginalFilename());
+            if (imageUrl == null) return ApiResponse.error("Rasm yuklashda xatolik");
 
-            if (Boolean.TRUE.equals(isCover)) photoRepository.removeCoverByResortId(resortId);
-
-            int sortOrder = photoRepository.countByResortId(resortId);
+            // Agar cover bo'lsa, eski cover ni o'chiramiz
+            if (isCover) {
+                photoRepository.removeCoverByResortId(resortId);
+            }
 
             Photo photo = Photo.builder()
                     .resort(resort)
-                    .url(url)
-                    .caption(caption)
-                    .isCover(Boolean.TRUE.equals(isCover))
-                    .sortOrder(sortOrder)
+                    .url(imageUrl)
+                    .isCover(isCover)
                     .build();
 
             photoRepository.save(photo);
-            return ApiResponse.ok("Rasm yuklandi", toDTO(photo));
+            return ApiResponse.ok("Rasm yuklandi", photo);
+
         } catch (IOException e) {
             log.error("Rasm yuklashda xato: {}", e.getMessage());
-            return ApiResponse.error("Rasm yuklashda xato yuz berdi");
+            return ApiResponse.error("Rasm yuklashda xatolik: " + e.getMessage());
         }
     }
 
-    public ApiResponse getByResort(Long resortId) {
-        List<PhotoResponseDTO> list = photoRepository
-                .findByResortIdOrderBySortOrderAsc(resortId)
-                .stream().map(this::toDTO).collect(Collectors.toList());
-        return ApiResponse.ok(list);
+    private String uploadToImgBB(String base64, String filename) {
+        try {
+            OkHttpClient client = new OkHttpClient();
+
+            RequestBody requestBody = new MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("key", imgbbApiKey)
+                    .addFormDataPart("image", base64)
+                    .addFormDataPart("name", filename != null ? filename : "photo")
+                    .build();
+
+            Request request = new Request.Builder()
+                    .url(IMGBB_UPLOAD_URL)
+                    .post(requestBody)
+                    .build();
+
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    log.error("ImgBB xato: {}", response.code());
+                    return null;
+                }
+                String body = response.body().string();
+                JsonObject json = JsonParser.parseString(body).getAsJsonObject();
+                if (json.get("success").getAsBoolean()) {
+                    return json.getAsJsonObject("data").get("url").getAsString();
+                }
+            }
+        } catch (Exception e) {
+            log.error("ImgBB yuklash xato: {}", e.getMessage());
+        }
+        return null;
     }
 
-    @Transactional
-    public ApiResponse setCover(Long photoId, Long adminId) {
-        Photo photo = photoRepository.findById(photoId).orElse(null);
-        if (photo == null) return ApiResponse.error("Rasm topilmadi");
-
-        Admin admin = adminRepository.findById(adminId).orElse(null);
-        boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
-        if (!isSuperAdmin && !photo.getResort().getAdmin().getId().equals(adminId))
-            return ApiResponse.error("Ruxsat yo'q");
-
-        photoRepository.removeCoverByResortId(photo.getResort().getId());
-        photo.setIsCover(true);
-        photoRepository.save(photo);
-        return ApiResponse.ok("Cover rasm o'rnatildi");
+    public ApiResponse getByResort(Long resortId) {
+        List<Photo> photos = photoRepository.findByResortIdOrderBySortOrderAsc(resortId);
+        return ApiResponse.ok("Rasmlar", photos);
     }
 
     @Transactional
     public ApiResponse delete(Long photoId, Long adminId) {
         Photo photo = photoRepository.findById(photoId).orElse(null);
         if (photo == null) return ApiResponse.error("Rasm topilmadi");
-
-        Admin admin = adminRepository.findById(adminId).orElse(null);
-        boolean isSuperAdmin = admin != null && admin.getRole() == Admin.AdminRole.SUPERADMIN;
-        if (!isSuperAdmin && !photo.getResort().getAdmin().getId().equals(adminId))
-            return ApiResponse.error("Ruxsat yo'q");
-
-        try {
-            String filePath = photo.getUrl()
-                    .replace(baseUrl + "/uploads", uploadDir)
-                    .replace("/", File.separator);
-            Path path = Paths.get(filePath);
-            if (Files.exists(path)) Files.delete(path);
-        } catch (IOException e) {
-            log.warn("Faylni o'chirishda xato: {}", e.getMessage());
-        }
-
-        photoRepository.deleteById(photoId);
+        photoRepository.delete(photo);
         return ApiResponse.ok("Rasm o'chirildi");
     }
 
-    private String getExtension(String fileName) {
-        if (fileName == null || !fileName.contains(".")) return "";
-        return fileName.substring(fileName.lastIndexOf(".") + 1).toLowerCase();
-    }
-
-    private boolean isAllowedExtension(String ext) {
-        return ext.equals("jpg") || ext.equals("jpeg") || ext.equals("png") || ext.equals("webp");
-    }
-
-    private PhotoResponseDTO toDTO(Photo p) {
-        return PhotoResponseDTO.builder()
-                .id(p.getId())
-                .resortId(p.getResort().getId())
-                .url(p.getUrl())
-                .thumbnailUrl(p.getThumbnailUrl())
-                .caption(p.getCaption())
-                .isCover(p.getIsCover())
-                .sortOrder(p.getSortOrder())
-                .uploadedAt(p.getUploadedAt())
-                .build();
+    @Transactional
+    public ApiResponse setCover(Long photoId, Long resortId) {
+        photoRepository.removeCoverByResortId(resortId);
+        Photo photo = photoRepository.findById(photoId).orElse(null);
+        if (photo == null) return ApiResponse.error("Rasm topilmadi");
+        photo.setIsCover(true);
+        photoRepository.save(photo);
+        return ApiResponse.ok("Cover o'rnatildi");
     }
 }
